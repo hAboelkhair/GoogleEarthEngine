@@ -1,0 +1,34 @@
+// Define the region of interest: Egypt
+var egypt = ee.Geometry.Rectangle([24.7, 21.7, 36.9, 31.7]);
+Map.centerObject(egypt, 5);
+
+// Load Sentinel-5P L3 O₃ dataset
+var o3 = ee.ImageCollection("COPERNICUS/S5P/OFFL/L3_O3")
+           .select('O3_column_number_density')
+           .filterBounds(egypt)
+           .filterDate('2019-01-01', '2024-12-31');
+
+// Generate a list of monthly time intervals
+var months = ee.List.sequence(0, 71); // 6 years × 12 months = 72 months
+
+months.evaluate(function(monthList) {
+  monthList.forEach(function(m) {
+    var start = ee.Date('2019-01-01').advance(m, 'month');
+    var end = start.advance(1, 'month');
+    var monthly = o3.filterDate(start, end).mean()
+                    .clip(egypt)
+                    .set('monthLabel', start.format('YYYY-MM'));
+
+    // Export each month as GeoTIFF
+    Export.image.toDrive({
+      image: monthly,
+      description: 'O3_' + start.format('YYYY_MM').getInfo(),
+      folder: 'GEE_O3_Egypt',
+      fileNamePrefix: 'O3_Egypt_' + start.format('YYYY_MM').getInfo(),
+      region: egypt,
+      scale: 1000,
+      crs: 'EPSG:4326',
+      maxPixels: 1e13
+    });
+  });
+});
