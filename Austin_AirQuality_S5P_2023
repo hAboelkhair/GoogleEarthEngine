@@ -1,0 +1,104 @@
+// 1. Load Austin shapefile
+var austin = ee.FeatureCollection("projects/propane-bebop-462221-e2/assets/Austin");
+Map.centerObject(austin, 9);
+
+// 2. Parameters for S5P products
+var params = {
+  'NO2': {
+    id: 'COPERNICUS/S5P/NRTI/L3_NO2',
+    band: 'NO2_column_number_density',
+    unit: 'mol/m²',
+    palette: ['white', 'yellow', 'orange', 'red']
+  },
+  'O3': {
+    id: 'COPERNICUS/S5P/NRTI/L3_O3',
+    band: 'O3_column_number_density',
+    unit: 'mol/m²',
+    palette: ['blue', 'cyan', 'green', 'purple']
+  },
+  'CO': {
+    id: 'COPERNICUS/S5P/NRTI/L3_CO',
+    band: 'CO_column_number_density',
+    unit: 'mol/m²',
+    palette: ['white', 'blue', 'darkblue']
+  },
+  'SO2': {
+    id: 'COPERNICUS/S5P/NRTI/L3_SO2',
+    band: 'SO2_column_number_density',
+    unit: 'mol/m²',
+    palette: ['white', 'pink', 'purple', 'black']
+  },
+  'CH4': {
+    id: 'COPERNICUS/S5P/OFFL/L3_CH4',
+    band: 'CH4_column_volume_mixing_ratio_dry_air',
+    unit: 'mol/mol',
+    palette: ['white', 'green', 'orange', 'red']
+  },
+  'HCHO': {
+    id: 'COPERNICUS/S5P/NRTI/L3_HCHO',
+    band: 'tropospheric_HCHO_column_number_density',
+    unit: 'mol/m²',
+    palette: ['white', 'orange', 'brown']
+  }
+};
+
+// 3. Date range and months
+var start = ee.Date('2023-01-01');
+var end = ee.Date('2023-12-31');
+var months = ee.List.sequence(0, 11);
+
+// 4. Process each parameter
+Object.keys(params).forEach(function(key) {
+  var param = params[key];
+  var col = ee.ImageCollection(param.id)
+    .select(param.band)
+    .filterBounds(austin)
+    .filterDate(start, end);
+
+  // Monthly time series feature collection
+  var monthly = months.map(function(m) {
+    var monthStart = start.advance(m, 'month');
+    var monthEnd = monthStart.advance(1, 'month');
+    var mean = col.filterDate(monthStart, monthEnd).mean();
+    var stat = mean.reduceRegion({
+      reducer: ee.Reducer.mean(),
+      geometry: austin.geometry(),
+      scale: 1000,
+      maxPixels: 1e13
+    });
+    return ee.Feature(null, {
+      'date': monthStart.format('YYYY-MM'),
+      'value': stat.get(param.band)
+    });
+  });
+
+  var chartFC = ee.FeatureCollection(monthly);
+
+  // Chart
+  var chart = ui.Chart.feature.byFeature(chartFC, 'date', 'value')
+    .setChartType('LineChart')
+    .setOptions({
+      title: key + ' Monthly Mean over Austin',
+      hAxis: {title: 'Month'},
+      vAxis: {title: key + ' (' + param.unit + ')'},
+      lineWidth: 2,
+      pointSize: 4
+    });
+  print(chart);
+
+  // Map layer (we must evaluate the max value before using in visualization)
+  var meanImage = col.mean().clip(austin);
+  meanImage.reduceRegion({
+    reducer: ee.Reducer.max(),
+    geometry: austin.geometry(),
+    scale: 1000,
+    maxPixels: 1e13
+  }).evaluate(function(maxDict) {
+    var maxVal = maxDict[param.band];
+    Map.addLayer(meanImage, {
+      min: 0,
+      max: maxVal,
+      palette: param.palette
+    }, key + ' Mean (2023)');
+  });
+});
