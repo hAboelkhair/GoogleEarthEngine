@@ -1,0 +1,91 @@
+// 1. Define the Nile Delta region with a bounding box
+var nileDelta = ee.Geometry.Rectangle([29.5, 30.0, 32.6, 31.6]); // Approximate coordinates
+Map.centerObject(nileDelta, 7);
+
+// 2. Load MODIS MOD16A2 ET dataset (8-day composite) for 2013–2020
+var dataset = ee.ImageCollection("MODIS/006/MOD16A2")
+                .filterDate('2013-01-01', '2020-12-31')
+                .filterBounds(nileDelta);
+
+// 3. Function to calculate mean ET per year
+function yearlyMeanET(year) {
+  var start = ee.Date.fromYMD(year, 1, 1);
+  var end = start.advance(1, 'year');
+  
+  var yearlyET = dataset
+    .filterDate(start, end)
+    .map(function(img) {
+      return img.select('ET').multiply(0.1).copyProperties(img, ['system:time_start']);
+    })
+    .mean()
+    .clip(nileDelta)
+    .set('year', year);
+  
+  return yearlyET;
+}
+
+// 4. Create an image collection of yearly ET images
+var years = ee.List.sequence(2013, 2020);
+var yearlyETImages = ee.ImageCollection.fromImages(years.map(function(y) {
+  return yearlyMeanET(y);
+}));
+
+// 5. Display all yearly ET maps (optional, you can comment this out if too slow)
+years.getInfo().forEach(function(year) {
+  var image = yearlyETImages.filter(ee.Filter.eq('year', year)).first();
+  Map.addLayer(image, 
+               {min: 0, max: 1000, palette: ['blue', 'cyan', 'green', 'yellow', 'orange', 'red']}, 
+               'Mean ET ' + year);
+});
+
+// 6. Create and print a time series chart of mean ET values
+var chartFeatures = years.map(function(year) {
+  year = ee.Number(year);
+  var start = ee.Date.fromYMD(year, 1, 1);
+  var end = start.advance(1, 'year');
+  
+  var filtered = dataset
+    .filterDate(start, end)
+    .map(function(img) {
+      return img.select('ET').multiply(0.1);
+    });
+    
+  var mean = filtered.mean().reduceRegion({
+    reducer: ee.Reducer.mean(),
+    geometry: nileDelta,
+    scale: 500,
+    maxPixels: 1e13
+  });
+  
+  return ee.Feature(null, {
+    'year': year,
+    'ET_mm': mean.get('ET')
+  });
+});
+
+var chart = ui.Chart.feature.byFeature(ee.FeatureCollection(chartFeatures), 'year', 'ET_mm')
+  .setChartType('ColumnChart')
+  .setOptions({
+    title: 'Annual Mean Evapotranspiration (2013–2020) - Nile Delta',
+    hAxis: {title: 'Year'},
+    vAxis: {title: 'ET (mm)'},
+    legend: 'none',
+    colors: ['#1f78b4']
+  });
+
+print(chart);
+
+// 7. Optional: Export yearly ET images to Google Drive
+years.getInfo().forEach(function(year) {
+  var image = yearlyETImages.filter(ee.Filter.eq('year', year)).first();
+  
+  Export.image.toDrive({
+    image: image,
+    description: 'Mean_ET_NileDelta_' + year,
+    folder: 'ET_Export',
+    fileNamePrefix: 'Mean_ET_' + year,
+    region: nileDelta,
+    scale: 500,
+    maxPixels: 1e13
+  });
+});
